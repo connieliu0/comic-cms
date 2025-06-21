@@ -1,22 +1,18 @@
 'use client'
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useDropzone } from 'react-dropzone';
-import { useRouter } from 'next/navigation';
-import { saveComic } from '../../../lib/supabase-utils';
+import { useSearchParams } from 'next/navigation';
+import { getComic, updateComic, Comic } from '../../../lib/supabase-utils';
 
-interface Page {
-  id: number;
-  image: string;
-  caption: string;
-  createdAt: Date;
-}
-
-const SimpleCMS = () => {
-  const router = useRouter();
-  const [pages, setPages] = useState<Page[]>([]);
+export default function EditComic() {
+  const searchParams = useSearchParams();
+  const comicId = searchParams.get('id');
+  
+  const [originalComic, setOriginalComic] = useState<Comic | null>(null);
+  const [pages, setPages] = useState([]);
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
-  const [image, setImage] = useState<File | null>(null);
+  const [image, setImage] = useState(null);
   const [imagePreview, setImagePreview] = useState('');
   const [caption, setCaption] = useState('');
   const [isUploading, setIsUploading] = useState(false);
@@ -24,12 +20,50 @@ const SimpleCMS = () => {
   const [editText, setEditText] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [comicTitle, setComicTitle] = useState('');
-  const [savedComicId, setSavedComicId] = useState<string | null>(null);
-  const [showShareLinks, setShowShareLinks] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const currentPage = pages[currentPageIndex] || null;
 
-  const onDrop = (acceptedFiles: File[]) => {
+  useEffect(() => {
+    async function loadComic() {
+      if (!comicId) {
+        setError('No comic ID provided');
+        setLoading(false);
+        return;
+      }
+
+      try {
+        const comicData = await getComic(comicId);
+        if (comicData && comicData.pages) {
+          setOriginalComic(comicData);
+          setComicTitle(comicData.title || '');
+          
+          // Convert comic pages to local format
+          const localPages = comicData.pages.map(page => ({
+            id: page.id,
+            image: page.image_url, // Store as URL
+            caption: page.caption,
+            createdAt: new Date()
+          }));
+          
+          setPages(localPages);
+          setCurrentPageIndex(0);
+        } else {
+          setError('Comic not found');
+        }
+      } catch (err) {
+        setError('Failed to load comic');
+        console.error('Error loading comic:', err);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    loadComic();
+  }, [comicId]);
+
+  const onDrop = (acceptedFiles) => {
     const file = acceptedFiles[0];
     if (file) {
       setImage(file);
@@ -58,7 +92,7 @@ const SimpleCMS = () => {
       
       const newPage = {
         id: Date.now(),
-        image: imagePreview,
+        image: image, // Store the File object for new pages
         caption: caption,
         createdAt: new Date()
       };
@@ -134,15 +168,14 @@ const SimpleCMS = () => {
     setEditText('');
   };
 
-  const replaceCurrentImage = (acceptedFiles: File[]) => {
+  const replaceCurrentImage = (acceptedFiles) => {
     if (currentPage && acceptedFiles[0]) {
       const file = acceptedFiles[0];
-      const newImagePreview = URL.createObjectURL(file);
       
       const updatedPages = [...pages];
       updatedPages[currentPageIndex] = {
         ...currentPage,
-        image: newImagePreview
+        image: file // Store the new File object
       };
       setPages(updatedPages);
     }
@@ -162,56 +195,81 @@ const SimpleCMS = () => {
       return;
     }
 
+    if (!comicId) {
+      alert('No comic ID found');
+      return;
+    }
+
     setIsSaving(true);
     
     try {
-      // Convert pages to the format expected by saveComic
+      // Convert pages to the format expected by updateComic
       const pagesToSave = pages.map(page => ({
-        image: page.image,
+        id: page.id,
+        image: page.image, // Can be File or URL
         caption: page.caption
       }));
 
-      const comicId = await saveComic(pagesToSave, comicTitle || 'My Comic');
+      await updateComic(comicId, pagesToSave, comicTitle);
       
-      setSavedComicId(comicId);
-      setShowShareLinks(true);
+      alert('Comic updated successfully!');
       
-      // Redirect to edit page after a short delay to show the success message
-      setTimeout(() => {
-        router.push(`/edit?id=${comicId}`);
-      }, 2000);
-      
-    } catch (error: any) {
-      alert(`Failed to save comic: ${error.message}`);
+    } catch (error) {
+      alert(`Failed to update comic: ${error.message}`);
     } finally {
       setIsSaving(false);
     }
   };
 
-  const copyToClipboard = async (text: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      alert('Link copied to clipboard!');
-    } catch (err) {
-      alert('Failed to copy link');
-    }
-  };
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-red-500 mx-auto"></div>
+          <p className="mt-4 text-gray-600">Loading comic...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error || !originalComic || !comicId) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <h1 className="text-2xl font-bold text-gray-800 mb-4">Comic Not Found</h1>
+          <p className="text-gray-600 mb-6">{error || 'The comic you\'re looking for doesn\'t exist.'}</p>
+          <Link
+            href="/"
+            className="px-6 py-3 border-2 border-black text-black font-medium hover:bg-black hover:text-white transition-colors"
+          >
+            ← Back to Home
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 p-8">
       <div className="max-w-4xl mx-auto">
         <div className="mb-6">
           <div className="flex justify-between items-center mb-4">
-            <h1 className="text-2xl font-bold">Comic CMS</h1>
+            <h1 className="text-2xl font-bold">Edit Comic</h1>
             <div className="flex items-center gap-2">
               <span className="text-sm text-gray-600">
                 {pages.length > 0 ? `Page ${currentPageIndex + 1} of ${pages.length}` : 'No pages created'}
               </span>
               <Link
+                href={`/comic/${comicId}`}
+                className="px-4 py-2 border-2 border-blue-500 text-blue-500 font-medium hover:bg-blue-500 hover:text-white transition-colors"
+              >
+                View Comic
+              </Link>
+              <Link
                 href="/"
                 className="px-4 py-2 border-2 border-black text-black font-medium hover:bg-black hover:text-white transition-colors"
               >
-                ← Back to Home
+                ← Create New Comic
               </Link>
             </div>
           </div>
@@ -233,72 +291,9 @@ const SimpleCMS = () => {
               disabled={isSaving || pages.length === 0}
               className="px-6 py-3 border-2 border-green-500 text-green-500 font-medium hover:bg-green-500 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {isSaving ? 'Saving...' : 'Save & Share Comic'}
+              {isSaving ? 'Saving...' : 'Save Changes'}
             </button>
           </div>
-          
-          {/* Share Links */}
-          {showShareLinks && savedComicId && (
-            <div className="mt-4 p-4 bg-green-50 border border-green-200 rounded-lg">
-              <h3 className="text-lg font-semibold text-green-800 mb-3">🎉 Comic Saved Successfully!</h3>
-              <p className="text-sm text-green-700 mb-3">Redirecting to edit page in 2 seconds...</p>
-              <div className="space-y-3">
-                <div>
-                  <label className="block text-sm font-medium text-green-700 mb-1">Share Link (Public View)</label>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={`${window.location.origin}/comic/${savedComicId}`}
-                      readOnly
-                      className="flex-1 p-2 border border-green-300 rounded bg-white text-sm"
-                    />
-                    <button
-                      onClick={() => copyToClipboard(`${window.location.origin}/comic/${savedComicId}`)}
-                      className="px-3 py-2 bg-green-500 text-white text-sm rounded hover:bg-green-600 transition-colors"
-                    >
-                      Copy
-                    </button>
-                    <Link
-                      href={`/comic/${savedComicId}`}
-                      target="_blank"
-                      className="px-3 py-2 bg-blue-500 text-white text-sm rounded hover:bg-blue-600 transition-colors"
-                    >
-                      View
-                    </Link>
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-green-700 mb-1">Edit Link</label>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={`${window.location.origin}/edit?id=${savedComicId}`}
-                      readOnly
-                      className="flex-1 p-2 border border-green-300 rounded bg-white text-sm"
-                    />
-                    <button
-                      onClick={() => copyToClipboard(`${window.location.origin}/edit?id=${savedComicId}`)}
-                      className="px-3 py-2 bg-green-500 text-white text-sm rounded hover:bg-green-600 transition-colors"
-                    >
-                      Copy
-                    </button>
-                    <Link
-                      href={`/edit?id=${savedComicId}`}
-                      className="px-3 py-2 bg-orange-500 text-white text-sm rounded hover:bg-orange-600 transition-colors"
-                    >
-                      Edit
-                    </Link>
-                  </div>
-                </div>
-              </div>
-              <button
-                onClick={() => setShowShareLinks(false)}
-                className="mt-3 text-sm text-green-600 hover:text-green-800 underline"
-              >
-                Hide links
-              </button>
-            </div>
-          )}
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -318,7 +313,7 @@ const SimpleCMS = () => {
                   >
                     <input {...getReplaceInputProps()} />
                     <img 
-                      src={currentPage.image} 
+                      src={currentPage.image instanceof File ? URL.createObjectURL(currentPage.image) : currentPage.image} 
                       alt="Comic panel" 
                       className="w-full max-h-64 object-contain mx-auto rounded-lg shadow-sm"
                     />
@@ -399,7 +394,7 @@ const SimpleCMS = () => {
           {/* Right Panel - Create New Page */}
           <div className="bg-white rounded-lg shadow-sm border">
             <div className="p-4 border-b">
-              <h2 className="text-lg font-semibold">Create New Page</h2>
+              <h2 className="text-lg font-semibold">Add New Page</h2>
             </div>
             
             {/* Upload Area */}
@@ -456,7 +451,7 @@ const SimpleCMS = () => {
                 disabled={isUploading || !image || !caption.trim()}
                 className="w-full px-6 py-3 border-2 border-black text-black font-medium hover:bg-black hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {isUploading ? 'Creating...' : 'Create Page'}
+                {isUploading ? 'Adding...' : 'Add Page'}
               </button>
             </div>
           </div>
@@ -464,6 +459,4 @@ const SimpleCMS = () => {
       </div>
     </div>
   );
-};
-
-export default SimpleCMS;
+}
