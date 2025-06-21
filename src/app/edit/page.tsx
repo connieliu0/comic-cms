@@ -1,5 +1,5 @@
 'use client'
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { useDropzone } from 'react-dropzone';
@@ -14,7 +14,7 @@ interface Page {
   createdAt: Date;
 }
 
-export default function EditComic() {
+function EditComicContent() {
   const searchParams = useSearchParams();
   const editId = searchParams.get('id');
   
@@ -476,5 +476,20 @@ export default function EditComic() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function EditComicPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-gray-300 mx-auto"></div>
+          <p className="mt-4 text-gray-500">Loading editor...</p>
+        </div>
+      </div>
+    }>
+      <EditComicContent />
+    </Suspense>
   );
 }
