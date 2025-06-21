@@ -66,8 +66,9 @@ export async function saveComic(pages: ComicPage[], title: string): Promise<stri
         }
 
         return {
+          id: uuidv4(), // Generate UUID for each page
           comic_id: comicId,
-          page_number: index + 1, // Add page number
+          page_number: index + 1,
           image_url,
           caption: page.caption
         };
@@ -76,7 +77,7 @@ export async function saveComic(pages: ComicPage[], title: string): Promise<stri
 
     // Insert all pages into comic_pages table
     const { error: pagesError } = await supabase
-      .from('comic_pages') // Updated table name
+      .from('comic_pages')
       .insert(pagesWithUrls);
 
     if (pagesError) {
@@ -153,7 +154,7 @@ export async function updateComic(comicId: string, pages: ComicPage[], title: st
         }
 
         // If page has an ID, update it, otherwise create new
-        if (page.id) {
+        if (page.id && existingIds.has(page.id)) {
           const { error: updateError } = await supabase
             .from('comic_pages')
             .update({ 
@@ -167,9 +168,11 @@ export async function updateComic(comicId: string, pages: ComicPage[], title: st
             throw new Error(`Error updating page: ${updateError.message}`);
           }
         } else {
+          // Generate new UUID for new pages
           const { error: insertError } = await supabase
             .from('comic_pages')
             .insert([{
+              id: uuidv4(),
               comic_id: comicId,
               image_url,
               caption: page.caption,
