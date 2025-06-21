@@ -133,8 +133,7 @@ export async function getComic(id: string): Promise<Comic | null> {
       .single();
 
     if (comicError) {
-      console.error('Error fetching comic:', comicError);
-      return null;
+      throw new Error(`Error fetching comic: ${comicError.message}`);
     }
 
     console.log('Found comic:', existingComic);

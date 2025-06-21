@@ -1,5 +1,5 @@
 'use client'
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { useParams } from 'next/navigation';
@@ -25,6 +25,18 @@ export default function ComicViewer() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const goToPreviousPage = useCallback(() => {
+    if (currentPageIndex > 0) {
+      setCurrentPageIndex(currentPageIndex - 1);
+    }
+  }, [currentPageIndex]);
+
+  const goToNextPage = useCallback(() => {
+    if (comic && currentPageIndex < comic.pages.length - 1) {
+      setCurrentPageIndex(currentPageIndex + 1);
+    }
+  }, [currentPageIndex, comic]);
+
   useEffect(() => {
     async function loadComic() {
       try {
@@ -42,8 +54,8 @@ export default function ComicViewer() {
         } else {
           setError('Comic not found');
         }
-      } catch (err) {
-        console.error('Error loading comic:', err);
+      } catch (error) {
+        console.error('Error loading comic:', error);
         setError('Failed to load comic');
       } finally {
         setLoading(false);
@@ -64,19 +76,7 @@ export default function ComicViewer() {
 
     window.addEventListener('keydown', handleKeyPress);
     return () => window.removeEventListener('keydown', handleKeyPress);
-  }, [currentPageIndex, comic]);
-
-  const goToPreviousPage = () => {
-    if (currentPageIndex > 0) {
-      setCurrentPageIndex(currentPageIndex - 1);
-    }
-  };
-
-  const goToNextPage = () => {
-    if (comic && currentPageIndex < comic.pages.length - 1) {
-      setCurrentPageIndex(currentPageIndex + 1);
-    }
-  };
+  }, [goToPreviousPage, goToNextPage]);
 
   if (loading) {
     return (

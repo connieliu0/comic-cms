@@ -5,13 +5,21 @@ import Image from 'next/image';
 import { useDropzone } from 'react-dropzone';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { getComic, updateComic, Comic } from '../../../lib/supabase-utils';
+import '../styles/cms.css';
+
+interface Page {
+  id: string;
+  image: File | string;
+  caption: string;
+  createdAt: Date;
+}
 
 export default function EditComic() {
   const searchParams = useSearchParams();
-  const comicId = searchParams.get('id');
+  const editId = searchParams.get('id');
   
   const [originalComic, setOriginalComic] = useState<Comic | null>(null);
-  const [pages, setPages] = useState([]);
+  const [pages, setPages] = useState<Page[]>([]);
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
   const [image, setImage] = useState(null);
   const [imagePreview, setImagePreview] = useState('');
@@ -23,28 +31,30 @@ export default function EditComic() {
   const [comicTitle, setComicTitle] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [savedComicId, setSavedComicId] = useState('');
+  const [showShareLinks, setShowShareLinks] = useState(false);
 
   const currentPage = pages[currentPageIndex] || null;
 
   useEffect(() => {
     async function loadComic() {
-      if (!comicId) {
+      if (!editId) {
         setError('No comic ID provided');
-        setLoading(false);
         return;
       }
-
+      
+      setLoading(true);
       try {
-        const comicData = await getComic(comicId);
+        const comicData = await getComic(editId);
         if (comicData && comicData.pages) {
-          setOriginalComic(comicData);
           setComicTitle(comicData.title || '');
+          setSavedComicId(editId);
+          setShowShareLinks(true);
           
-          // Convert comic pages to local format
           const localPages = comicData.pages.map(page => ({
-            id: page.id,
-            image: page.image_url, // Store as URL
-            caption: page.caption,
+            id: page.id || Date.now().toString(),
+            image: page.image_url,
+            caption: page.caption || '',
             createdAt: new Date()
           }));
           
@@ -54,15 +64,16 @@ export default function EditComic() {
           setError('Comic not found');
         }
       } catch (err) {
-        setError('Failed to load comic');
-        console.error('Error loading comic:', err);
+        const errorMessage = err instanceof Error ? err.message : 'Failed to load comic';
+        console.error('Error loading comic:', errorMessage);
+        setError(errorMessage);
       } finally {
         setLoading(false);
       }
     }
 
     loadComic();
-  }, [comicId]);
+  }, [editId]);
 
   const onDrop = (acceptedFiles) => {
     const file = acceptedFiles[0];
@@ -92,7 +103,7 @@ export default function EditComic() {
       await new Promise(resolve => setTimeout(resolve, 1000));
       
       const newPage = {
-        id: Date.now(),
+        id: Date.now().toString(),
         image: image, // Store the File object for new pages
         caption: caption,
         createdAt: new Date()
@@ -196,7 +207,7 @@ export default function EditComic() {
       return;
     }
 
-    if (!comicId) {
+    if (!editId) {
       alert('No comic ID found');
       return;
     }
@@ -211,7 +222,7 @@ export default function EditComic() {
         caption: page.caption
       }));
 
-      await updateComic(comicId, pagesToSave, comicTitle);
+      await updateComic(editId, pagesToSave, comicTitle);
       
       alert('Comic updated successfully!');
       
@@ -233,7 +244,7 @@ export default function EditComic() {
     );
   }
 
-  if (error || !originalComic || !comicId) {
+  if (error || !originalComic || !editId) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
@@ -261,7 +272,7 @@ export default function EditComic() {
                 {pages.length > 0 ? `Page ${currentPageIndex + 1} of ${pages.length}` : 'No pages created'}
               </span>
               <Link
-                href={`/comic/${comicId}`}
+                href={`/comic/${editId}`}
                 className="px-4 py-2 border-2 border-blue-500 text-blue-500 font-medium hover:bg-blue-500 hover:text-white transition-colors"
               >
                 View Comic

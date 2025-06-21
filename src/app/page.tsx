@@ -279,7 +279,8 @@ export default function ComicCMS() {
     try {
       await navigator.clipboard.writeText(text);
       alert('Link copied to clipboard!');
-    } catch (err) {
+    } catch (error) {
+      console.error('Failed to copy link:', error);
       alert('Failed to copy link');
     }
   };
