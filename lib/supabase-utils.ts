@@ -124,7 +124,9 @@ export async function saveComic(pages: { image: File | string; caption: string }
 
 export async function getComic(id: string): Promise<Comic | null> {
   try {
-    const { data: comic, error: comicError } = await supabase
+    console.log('Fetching comic with ID:', id);
+    
+    const { data: existingComic, error: comicError } = await supabase
       .from('comics')
       .select('*')
       .eq('id', id)
@@ -134,6 +136,8 @@ export async function getComic(id: string): Promise<Comic | null> {
       console.error('Error fetching comic:', comicError);
       return null;
     }
+
+    console.log('Found comic:', existingComic);
 
     const { data: pages, error: pagesError } = await supabase
       .from('comic_pages')
@@ -146,8 +150,10 @@ export async function getComic(id: string): Promise<Comic | null> {
       return null;
     }
 
+    console.log('Found pages:', pages);
+
     return {
-      ...comic,
+      ...existingComic,
       pages: pages || []
     };
   } catch (error) {

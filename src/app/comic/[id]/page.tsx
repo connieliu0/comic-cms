@@ -1,90 +1,169 @@
 'use client'
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { getComic, Comic } from '../../../../lib/supabase-utils';
+import Image from 'next/image';
+import { useParams } from 'next/navigation';
+import { getComic } from '../../../../lib/supabase-utils';
+import '../../styles/comic.css';
 
-interface ComicViewProps {
-  params: {
-    id: string;
-  };
+interface ComicPage {
+  id?: string;
+  image_url: string;
+  caption: string;
 }
 
-export default function ComicView({ params }: ComicViewProps) {
+interface Comic {
+  id?: string;
+  title?: string;
+  pages: ComicPage[];
+}
+
+export default function ComicViewer() {
+  const { id } = useParams();
   const [comic, setComic] = useState<Comic | null>(null);
+  const [currentPageIndex, setCurrentPageIndex] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     async function loadComic() {
       try {
-        const comicData = await getComic(params.id);
-        if (comicData) {
-          setComic(comicData);
+        const comicData = await getComic(id as string);
+        if (comicData && comicData.pages) {
+          setComic({
+            id: comicData.id,
+            title: comicData.title,
+            pages: comicData.pages.map(page => ({
+              id: page.id,
+              image_url: page.image_url || '',
+              caption: page.caption || ''
+            }))
+          });
         } else {
           setError('Comic not found');
         }
       } catch (err) {
-        setError('Failed to load comic');
         console.error('Error loading comic:', err);
+        setError('Failed to load comic');
       } finally {
         setLoading(false);
       }
     }
 
     loadComic();
-  }, [params.id]);
+  }, [id]);
+
+  useEffect(() => {
+    function handleKeyPress(e: KeyboardEvent) {
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+        goToPreviousPage();
+      } else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+        goToNextPage();
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyPress);
+    return () => window.removeEventListener('keydown', handleKeyPress);
+  }, [currentPageIndex, comic]);
+
+  const goToPreviousPage = () => {
+    if (currentPageIndex > 0) {
+      setCurrentPageIndex(currentPageIndex - 1);
+    }
+  };
+
+  const goToNextPage = () => {
+    if (comic && currentPageIndex < comic.pages.length - 1) {
+      setCurrentPageIndex(currentPageIndex + 1);
+    }
+  };
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-white flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-gray-300 mx-auto"></div>
-          <p className="mt-4 text-gray-500">Loading comic...</p>
+      <div className="loading-container">
+        <div>
+          <div className="loading-spinner"></div>
+          <p className="loading-text">Loading comic...</p>
         </div>
       </div>
     );
   }
 
-  if (error || !comic || !comic.pages || comic.pages.length === 0) {
+  if (error || !comic) {
     return (
-      <div className="min-h-screen bg-white flex items-center justify-center">
-        <div className="text-center p-8">
-          <h1 className="text-2xl font-bold text-gray-800 mb-4">Comic Not Found</h1>
-          <p className="text-gray-600 mb-6">{error || 'The comic you\'re looking for doesn\'t exist or has no pages.'}</p>
-          <Link
-            href="/"
-            className="px-6 py-3 border-2 border-black text-black font-medium hover:bg-black hover:text-white transition-colors"
-          >
-            ← Create a new comic
-          </Link>
-        </div>
+      <div className="error-container">
+        <h1 className="error-title">Oops!</h1>
+        <p className="error-message">{error || 'Something went wrong'}</p>
+        <Link href="/" className="back-button">
+          ← Back to Home
+        </Link>
       </div>
     );
   }
 
-  // For this view, we'll just show the first page as a single panel
-  const firstPage = comic.pages[0];
+  const currentPage = comic.pages[currentPageIndex];
 
   return (
-    <div className="h-screen w-full bg-white font-serif overflow-hidden">
-      <div className="relative w-full max-w-2xl h-full mx-auto">
-        <div className="absolute inset-0">
-          <img 
-            src={firstPage.image_url} 
-            alt={firstPage.caption || 'Comic panel'}
-            className="w-full h-full object-cover"
-          />
+    <div className="comic-container">
+      <div className="comic-content">
+        <div className="comic-header">
+          <h1 className="comic-title">{comic.title || 'Untitled Comic'}</h1>
+          <div className="comic-navigation">
+            <button
+              onClick={goToPreviousPage}
+              disabled={currentPageIndex <= 0}
+              className="nav-button"
+            >
+              ← Previous
+            </button>
+            <span className="page-info">
+              Page {currentPageIndex + 1} of {comic.pages.length}
+            </span>
+            <button
+              onClick={goToNextPage}
+              disabled={currentPageIndex >= comic.pages.length - 1}
+              className="nav-button"
+            >
+              Next →
+            </button>
+          </div>
         </div>
-        <div 
-          className="absolute bottom-0 left-0 right-0 h-1/3"
-          style={{
-            background: 'linear-gradient(to top, white 20%, rgba(255,255,255,0) 100%)'
-          }}
-        />
-        <div className="absolute bottom-0 left-0 right-0 h-1/3 p-8 flex items-center justify-center">
-          <p className="text-center text-xl md:text-2xl text-red-600">
-            {firstPage.caption}
-          </p>
+
+        <div className="comic-page">
+          <div className="page-image-container">
+            <Image 
+              src={currentPage.image_url} 
+              alt={`Page ${currentPageIndex + 1}`}
+              className="page-image"
+              width={800}
+              height={600}
+              style={{ objectFit: 'contain' }}
+            />
+          </div>
+          <div className="page-caption">
+            {currentPage.caption}
+          </div>
+        </div>
+
+        <div className="navigation-overlay">
+          <div 
+            className="nav-area prev"
+            onClick={goToPreviousPage}
+            style={{ visibility: currentPageIndex <= 0 ? 'hidden' : 'visible' }}
+          >
+            <div className="nav-hint">Previous Page</div>
+          </div>
+          <div 
+            className="nav-area next"
+            onClick={goToNextPage}
+            style={{ visibility: currentPageIndex >= comic.pages.length - 1 ? 'hidden' : 'visible' }}
+          >
+            <div className="nav-hint">Next Page</div>
+          </div>
+        </div>
+
+        <div className="keyboard-hint">
+          Use arrow keys to navigate
         </div>
       </div>
     </div>

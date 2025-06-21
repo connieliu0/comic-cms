@@ -1,8 +1,9 @@
 'use client'
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { useDropzone } from 'react-dropzone';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { getComic, updateComic, Comic } from '../../../lib/supabase-utils';
 
 export default function EditComic() {
@@ -312,10 +313,13 @@ export default function EditComic() {
                     className="cursor-pointer hover:opacity-80 transition-opacity group relative"
                   >
                     <input {...getReplaceInputProps()} />
-                    <img 
+                    <Image 
                       src={currentPage.image instanceof File ? URL.createObjectURL(currentPage.image) : currentPage.image} 
                       alt="Comic panel" 
-                      className="w-full max-h-64 object-contain mx-auto rounded-lg shadow-sm"
+                      className="current-page-image"
+                      width={800}
+                      height={600}
+                      style={{ objectFit: 'contain' }}
                     />
                     <div className="absolute inset-0 bg-black bg-opacity-50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center">
                       <p className="text-white font-medium">Click to change image</p>
@@ -412,10 +416,13 @@ export default function EditComic() {
                 <input {...getInputProps()} />
                 {imagePreview ? (
                   <div className="space-y-4">
-                    <img 
+                    <Image 
                       src={imagePreview} 
                       alt="Preview" 
-                      className="max-h-48 mx-auto rounded-lg shadow-sm"
+                      className="preview-image"
+                      width={400}
+                      height={300}
+                      style={{ objectFit: 'contain' }}
                     />
                     <p className="text-green-600 font-medium">Image selected</p>
                   </div>

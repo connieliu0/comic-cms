@@ -1,9 +1,11 @@
 'use client'
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { useDropzone } from 'react-dropzone';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { saveComic, getComic, updateComic } from '../../lib/supabase-utils';
+import './styles/cms.css';
 
 interface Page {
   id: string;
@@ -21,6 +23,8 @@ export default function ComicCMS() {
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
   const [image, setImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState('');
+  const [imageUrl, setImageUrl] = useState('');
+  const [imageInputType, setImageInputType] = useState<'upload' | 'url'>('upload');
   const [caption, setCaption] = useState('');
   const [isUploading, setIsUploading] = useState(false);
   const [isEditingText, setIsEditingText] = useState(false);
@@ -30,9 +34,40 @@ export default function ComicCMS() {
   const [savedComicId, setSavedComicId] = useState<string | null>(null);
   const [showShareLinks, setShowShareLinks] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [autosaveStatus, setAutosaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const [error, setError] = useState<string | null>(null);
 
   const currentPage = pages[currentPageIndex] || null;
   const isEditMode = !!editId;
+
+  // Autosave whenever pages change
+  useEffect(() => {
+    const autoSave = async () => {
+      if (pages.length > 0 && comicTitle && isEditMode) {
+        setAutosaveStatus('saving');
+        try {
+          const pagesForSaving = pages.map(page => ({
+            id: page.id,
+            image: page.image instanceof File ? page.image : page.image,
+            caption: page.caption
+          }));
+          
+          await updateComic(editId!, pagesForSaving, comicTitle);
+          setAutosaveStatus('saved');
+          
+          // Reset to idle after 3 seconds
+          setTimeout(() => {
+            setAutosaveStatus('idle');
+          }, 3000);
+        } catch (error) {
+          console.error('Autosave failed:', error);
+          setAutosaveStatus('idle');
+        }
+      }
+    };
+
+    autoSave();
+  }, [pages, comicTitle, editId, isEditMode]);
 
   // Load existing comic if editing
   useEffect(() => {
@@ -47,7 +82,6 @@ export default function ComicCMS() {
           setSavedComicId(editId);
           setShowShareLinks(true);
           
-          // Convert comic pages to local format
           const localPages = comicData.pages.map(page => ({
             id: page.id!,
             image: page.image_url,
@@ -58,8 +92,9 @@ export default function ComicCMS() {
           setPages(localPages);
           setCurrentPageIndex(0);
         }
-      } catch (err) {
-        console.error('Error loading comic:', err);
+      } catch (error) {
+        console.error('Error loading comic:', error);
+        setError('Failed to load comic');
       } finally {
         setLoading(false);
       }
@@ -73,6 +108,7 @@ export default function ComicCMS() {
     if (file) {
       setImage(file);
       setImagePreview(URL.createObjectURL(file));
+      setImageUrl('');
     }
   };
 
@@ -84,8 +120,15 @@ export default function ComicCMS() {
     multiple: false
   });
 
+  const handleImageUrlSubmit = () => {
+    if (imageUrl) {
+      setImagePreview(imageUrl);
+      setImage(null);
+    }
+  };
+
   const createNewPage = async () => {
-    if (!image || !caption.trim()) {
+    if ((!image && !imageUrl) || !caption.trim()) {
       alert('Please add both an image and caption');
       return;
     }
@@ -93,11 +136,9 @@ export default function ComicCMS() {
     setIsUploading(true);
     
     try {
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
       const newPage = {
         id: Date.now().toString(),
-        image: image,
+        image: image || imageUrl,
         caption: caption,
         createdAt: new Date()
       };
@@ -111,6 +152,7 @@ export default function ComicCMS() {
       
       setImage(null);
       setImagePreview('');
+      setImageUrl('');
       setCaption('');
       
     } catch (error) {
@@ -203,31 +245,31 @@ export default function ComicCMS() {
     setIsSaving(true);
     
     try {
-      const pagesToSave = pages.map(page => ({
-        ...(isEditMode && { id: page.id }),
-        image: page.image,
-        caption: page.caption
-      }));
-
+      console.log('Saving comic with pages:', pages);
+      
       let comicId;
       
       if (isEditMode && editId) {
-        // Update existing comic
-        await updateComic(editId, pagesToSave, comicTitle);
+        const pagesForSaving = pages.map(page => ({
+          id: page.id,
+          image: page.image instanceof File ? page.image : page.image,
+          caption: page.caption
+        }));
+        console.log('Updating comic with pages:', pagesForSaving);
+        await updateComic(editId, pagesForSaving, comicTitle);
         comicId = editId;
       } else {
-        // Create new comic
         const pagesForSaving = pages.map(({ image, caption }) => ({ image, caption }));
         comicId = await saveComic(pagesForSaving, comicTitle || 'My Comic');
-        // Immediately redirect to edit URL
         router.push(`/?id=${comicId}`);
       }
       
       setSavedComicId(comicId);
       setShowShareLinks(true);
       
-    } catch (error: any) {
-      alert(`Failed to save comic: ${error.message}`);
+    } catch (error) {
+      console.error('Error saving comic:', error);
+      alert(`Failed to save comic: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setIsSaving(false);
     }
@@ -256,7 +298,7 @@ export default function ComicCMS() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="page-container flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-red-500 mx-auto"></div>
           <p className="mt-4 text-gray-600">Loading comic...</p>
@@ -266,52 +308,60 @@ export default function ComicCMS() {
   }
 
   return (
-      <div className="max-w-7xl mx-auto">
-        <div className="mb-6">
-          <div className="flex justify-between items-start mb-4">
+    <div className="page-container">
+      <div className="content-container">
+        <div className="header-section">
+          <div className="header-content">
             <div className="flex items-center gap-6">
-              <h1 className="text-3xl font-bold">Comic CMS</h1>
+              <h1 className="page-title">Comic CMS</h1>
               
               {/* Share Links - Top Position */}
               {showShareLinks && savedComicId && (
-                <div className="flex items-center gap-4 bg-green-50 border border-green-200 rounded-lg px-4 py-2">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-green-700">Share:</span>
-                    <button
-                      onClick={() => copyToClipboard(`${window.location.origin}/comic/${savedComicId}`)}
-                      className="px-3 py-1 bg-green-500 text-white text-xs rounded hover:bg-green-600 transition-colors"
-                    >
-                      Copy View Link
-                    </button>
-                    <Link
-                      href={`/comic/${savedComicId}`}
-                      target="_blank"
-                      className="px-3 py-1 bg-blue-500 text-white text-xs rounded hover:bg-blue-600 transition-colors"
-                    >
-                      View
-                    </Link>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-green-700">Edit:</span>
-                    <button
-                      onClick={() => copyToClipboard(`${window.location.origin}/?id=${savedComicId}`)}
-                      className="px-3 py-1 bg-green-500 text-white text-xs rounded hover:bg-green-600 transition-colors"
-                    >
-                      Copy Edit Link
-                    </button>
+                <div className="share-links-container">
+                  <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-green-700">Share:</span>
+                      <button
+                        onClick={() => copyToClipboard(`${window.location.origin}/comic/${savedComicId}`)}
+                        className="share-button"
+                      >
+                        Copy View Link
+                      </button>
+                      <Link
+                        href={`/comic/${savedComicId}`}
+                        target="_blank"
+                        className="view-button"
+                      >
+                        View
+                      </Link>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-green-700">Edit:</span>
+                      <button
+                        onClick={() => copyToClipboard(`${window.location.origin}/?id=${savedComicId}`)}
+                        className="share-button"
+                      >
+                        Copy Edit Link
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
             </div>
             
-            <div className="flex items-center gap-4">
-              <span className="text-sm text-gray-600">
+            <div className="header-controls">
+              <span className="page-counter">
                 {pages.length > 0 ? `Page ${currentPageIndex + 1} of ${pages.length}` : 'No pages created'}
               </span>
+              {autosaveStatus !== 'idle' && (
+                <div className={`autosave-indicator ${autosaveStatus}`}>
+                  {autosaveStatus === 'saving' ? '💾 Saving...' : '✓ Saved'}
+                </div>
+              )}
               {isEditMode && (
                 <button
                   onClick={handleNewComic}
-                  className="px-4 py-2 border-2 border-blue-500 text-blue-500 font-medium hover:bg-blue-500 hover:text-white transition-colors"
+                  className="new-comic-button"
                 >
                   + New Comic
                 </button>
@@ -320,188 +370,237 @@ export default function ComicCMS() {
           </div>
           
           {/* Comic Title and Save */}
-          <div className="flex gap-4 items-end">
-            <div className="flex-1">
-              <label className="block text-sm font-medium text-gray-700 mb-2">Comic Title</label>
+          <div className="title-section">
+            <div className="title-input-container">
+              <label className="input-label">Comic Title</label>
               <input
                 type="text"
                 value={comicTitle}
                 onChange={(e) => setComicTitle(e.target.value)}
                 placeholder="Enter comic title..."
-                className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500"
+                className="title-input"
               />
             </div>
             <button
               onClick={handleSaveComic}
               disabled={isSaving || pages.length === 0}
-              className="px-6 py-3 border-2 border-green-500 text-green-500 font-medium hover:bg-green-500 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="save-button"
             >
               {isSaving ? 'Saving...' : isEditMode ? 'Save Changes' : 'Save & Share Comic'}
             </button>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          
+        <div className="panels-container">
           {/* Current Page Display */}
-          <div className="bg-white rounded-lg shadow-sm border">
-            <div className="p-4 border-b">
-              <h2 className="text-lg font-semibold">Current Page</h2>
+          <div className="panel">
+            <div className="panel-header">
+              <h2 className="panel-title">Current Page</h2>
             </div>
             
-            <div className="p-6">
+            <div className="panel-content">
               {currentPage ? (
-                <div className="space-y-4">
+                <div className="current-page-content">
                   <div 
                     {...getReplaceRootProps()}
-                    className="cursor-pointer hover:opacity-80 transition-opacity group relative"
+                    className="current-page-image-container"
                   >
                     <input {...getReplaceInputProps()} />
-                    <img 
+                    <Image 
                       src={currentPage.image instanceof File ? URL.createObjectURL(currentPage.image) : currentPage.image} 
                       alt="Comic panel" 
-                      className="w-full max-h-64 object-contain mx-auto rounded-lg shadow-sm"
+                      className="current-page-image"
+                      width={800}
+                      height={600}
+                      style={{ objectFit: 'contain' }}
                     />
-                    <div className="absolute inset-0 bg-black bg-opacity-50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center">
-                      <p className="text-white font-medium">Click to change image</p>
+                    <div className="image-overlay">
+                      <p className="overlay-text">Click to change image</p>
                     </div>
                   </div>
-                      
-                      {isEditingText ? (
-                        <div className="space-y-3">
-                          <textarea
-                            value={editText}
-                            onChange={(e) => setEditText(e.target.value)}
-                            className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500 resize-none"
-                            rows={3}
-                            autoFocus
-                          />
-                          <div className="flex gap-2">
-                            <button
-                              onClick={saveEditedText}
-                              className="px-4 py-2 bg-green-500 text-white text-sm rounded hover:bg-green-600 transition-colors"
-                            >
-                              Save
-                            </button>
-                            <button
-                              onClick={cancelEditingText}
-                              className="px-4 py-2 bg-gray-500 text-white text-sm rounded hover:bg-gray-600 transition-colors"
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <div 
-                          onClick={startEditingText}
-                          className="text-gray-700 font-medium cursor-pointer hover:bg-gray-100 p-3 rounded transition-colors border-2 border-dashed border-gray-300"
-                          title="Click to edit text"
-                        >
-                          {currentPage.caption}
-                        </div>
-                      )}
-
-                      {/* Navigation Controls */}
-                      <div className="flex gap-2 flex-wrap">
+                  
+                  {isEditingText ? (
+                    <div className="edit-text-container">
+                      <textarea
+                        value={editText}
+                        onChange={(e) => setEditText(e.target.value)}
+                        className="edit-text-input"
+                        rows={3}
+                        autoFocus
+                      />
+                      <div className="edit-buttons">
                         <button
-                          onClick={goToPreviousPage}
-                          disabled={currentPageIndex <= 0}
-                          className="px-4 py-2 border-2 border-black text-black font-medium hover:bg-black hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          onClick={saveEditedText}
+                          className="save-text-button"
                         >
-                          ← Previous
+                          Save
                         </button>
-                        
                         <button
-                          onClick={goToNextPage}
-                          disabled={currentPageIndex >= pages.length - 1}
-                          className="px-4 py-2 border-2 border-black text-black font-medium hover:bg-black hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          onClick={cancelEditingText}
+                          className="cancel-text-button"
                         >
-                          Next →
-                        </button>
-                        
-                        <button
-                          onClick={removeCurrentPage}
-                          className="px-4 py-2 border-2 border-red-500 text-red-500 font-medium hover:bg-red-500 hover:text-white transition-colors"
-                        >
-                          Remove Page
+                          Cancel
                         </button>
                       </div>
                     </div>
                   ) : (
-                    <div className="text-center text-gray-500 py-12">
-                      <p className="text-lg">No pages created yet</p>
-                      <p className="text-sm">Create your first page using the form on the right →</p>
+                    <div 
+                      onClick={startEditingText}
+                      className="text-display"
+                      title="Click to edit text"
+                    >
+                      {currentPage.caption}
+                    </div>
+                  )}
+
+                  {/* Navigation Controls */}
+                  <div className="navigation-controls">
+                    <button
+                      onClick={goToPreviousPage}
+                      disabled={currentPageIndex <= 0}
+                      className="nav-button"
+                    >
+                      ← Previous
+                    </button>
+                    
+                    <button
+                      onClick={goToNextPage}
+                      disabled={currentPageIndex >= pages.length - 1}
+                      className="nav-button"
+                    >
+                      Next →
+                    </button>
+                    
+                    <button
+                      onClick={removeCurrentPage}
+                      className="remove-button"
+                    >
+                      Remove Page
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="empty-state">
+                  <p className="empty-title">No pages created yet</p>
+                  <p className="empty-subtitle">Create your first page using the form on the right →</p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Create New Page */}
+          <div className="panel">
+            <div className="panel-header">
+              <h2 className="panel-title">{isEditMode ? 'Add New Page' : 'Create New Page'}</h2>
+            </div>
+            
+            {/* Image Input Tabs */}
+            <div className="image-input-container">
+              <div className="image-input-tabs">
+                <button 
+                  className={`image-input-tab ${imageInputType === 'upload' ? 'active' : ''}`}
+                  onClick={() => setImageInputType('upload')}
+                >
+                  Upload Image
+                </button>
+                <button 
+                  className={`image-input-tab ${imageInputType === 'url' ? 'active' : ''}`}
+                  onClick={() => setImageInputType('url')}
+                >
+                  Image URL
+                </button>
+              </div>
+
+              {imageInputType === 'upload' ? (
+                <div
+                  {...getRootProps()}
+                  className={`dropzone ${isDragActive ? 'active' : ''}`}
+                >
+                  <input {...getInputProps()} />
+                  {imagePreview && image ? (
+                    <div className="preview-container">
+                      <Image 
+                        src={imagePreview} 
+                        alt="Preview" 
+                        className="preview-image"
+                        width={400}
+                        height={300}
+                        style={{ objectFit: 'contain' }}
+                      />
+                      <p className="preview-text">Image selected</p>
+                    </div>
+                  ) : (
+                    <div className="upload-prompt">
+                      <p className="upload-title">Upload Image</p>
+                      <p className="upload-subtitle">
+                        {isDragActive ? 'Drop the image here' : 'Drag & drop an image or click to select'}
+                      </p>
                     </div>
                   )}
                 </div>
-              </div>
-
-              {/* Create New Page */}
-              <div className="bg-white rounded-lg shadow-sm border">
-                <div className="p-4 border-b">
-                  <h2 className="text-lg font-semibold">{isEditMode ? 'Add New Page' : 'Create New Page'}</h2>
-                </div>
-                
-                {/* Upload Area */}
-                <div className="p-6 border-b">
-                  <div
-                    {...getRootProps()}
-                    className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${
-                      isDragActive 
-                        ? 'border-red-500 bg-red-50' 
-                        : imagePreview 
-                        ? 'border-green-500 bg-green-50' 
-                        : 'border-red-500 bg-red-50 hover:bg-red-100'
-                    }`}
-                  >
-                    <input {...getInputProps()} />
-                    {imagePreview ? (
-                      <div className="space-y-4">
-                        <img 
-                          src={imagePreview} 
-                          alt="Preview" 
-                          className="max-h-48 mx-auto rounded-lg shadow-sm"
-                        />
-                        <p className="text-green-600 font-medium">Image selected</p>
-                      </div>
-                    ) : (
-                      <div className="space-y-2">
-                        <p className="text-red-600 text-lg font-medium">Upload Image</p>
-                        <p className="text-gray-500 text-sm">
-                          {isDragActive ? 'Drop the image here' : 'Drag & drop an image or click to select'}
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Text Caption */}
-                <div className="p-6 border-b">
-                  <div className="border-l-4 border-red-500 pl-4">
-                    <label className="block text-red-600 font-medium mb-2">Text</label>
-                    <textarea
-                      value={caption}
-                      onChange={(e) => setCaption(e.target.value)}
-                      placeholder="Enter your caption here..."
-                      className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500 resize-none"
-                      rows={4}
+              ) : (
+                <div className="url-input-container">
+                  <div className="url-input-wrapper">
+                    <input
+                      type="url"
+                      value={imageUrl}
+                      onChange={(e) => setImageUrl(e.target.value)}
+                      placeholder="Enter image URL..."
+                      className="url-input"
                     />
+                    <button
+                      onClick={handleImageUrlSubmit}
+                      disabled={!imageUrl}
+                      className="preview-button"
+                    >
+                      Preview Image
+                    </button>
                   </div>
+                  {imagePreview && !image && (
+                    <div className="preview-container">
+                      <Image 
+                        src={imagePreview} 
+                        alt="Preview" 
+                        className="preview-image"
+                        width={400}
+                        height={300}
+                        style={{ objectFit: 'contain' }}
+                      />
+                      <p className="preview-text">Image URL preview</p>
+                    </div>
+                  )}
                 </div>
+              )}
+            </div>
 
-                {/* Create Button */}
-                <div className="p-6">
-                  <button
-                    onClick={createNewPage}
-                    disabled={isUploading || !image || !caption.trim()}
-                    className="w-full px-6 py-3 border-2 border-black text-black font-medium hover:bg-black hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {isUploading ? 'Creating...' : 'Create Page'}
-                  </button>
-                </div>
+            {/* Text Caption */}
+            <div className="caption-container">
+              <div className="caption-input-wrapper">
+                <label className="input-label">Text</label>
+                <textarea
+                  value={caption}
+                  onChange={(e) => setCaption(e.target.value)}
+                  placeholder="Enter your caption here..."
+                  className="caption-input"
+                  rows={4}
+                />
               </div>
             </div>
+
+            {/* Create Button */}
+            <div className="create-button-container">
+              <button
+                onClick={createNewPage}
+                disabled={isUploading || (!image && !imageUrl) || !caption.trim()}
+                className="create-button"
+              >
+                {isUploading ? 'Creating...' : 'Create Page'}
+              </button>
+            </div>
           </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
