@@ -36,9 +36,12 @@ CREATE POLICY "Allow public delete on comic_pages" ON comic_pages FOR DELETE USI
 
 -- Create storage bucket for images
 INSERT INTO storage.buckets (id, name, public) 
-VALUES ('comic-images', 'comic-images', true)
+VALUES ('comics', 'comics', true)
 ON CONFLICT (id) DO NOTHING;
 
 -- Create storage policy
-CREATE POLICY "Allow public uploads" ON storage.objects FOR INSERT WITH CHECK (bucket_id = 'comic-images');
-CREATE POLICY "Allow public access" ON storage.objects FOR SELECT USING (bucket_id = 'comic-images');
+CREATE POLICY "Allow public uploads" ON storage.objects FOR INSERT WITH CHECK (bucket_id = 'comics');
+CREATE POLICY "Allow public access" ON storage.objects FOR SELECT USING (bucket_id = 'comics');
+
+-- Enable RLS on storage.objects
+ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;

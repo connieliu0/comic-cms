@@ -1,132 +1,197 @@
-import { supabase } from './supabase';
+import { createClient } from '@supabase/supabase-js';
+import { v4 as uuidv4 } from 'uuid';
+
+if (!process.env.NEXT_PUBLIC_SUPABASE_URL) {
+  throw new Error('Missing environment variable NEXT_PUBLIC_SUPABASE_URL');
+}
+
+if (!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+  throw new Error('Missing environment variable NEXT_PUBLIC_SUPABASE_ANON_KEY');
+}
+
+export const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+);
 
 export interface ComicPage {
   id?: string;
-  page_number: number;
-  image_url: string;
+  image_url?: string;
   caption: string;
+  image?: File;
 }
 
 export interface Comic {
   id?: string;
   title?: string;
-  created_at?: string;
-  updated_at?: string;
   pages?: ComicPage[];
 }
 
-export async function uploadImage(file: File): Promise<string> {
-  const fileExt = file.name.split('.').pop();
-  const fileName = `${Math.random()}.${fileExt}`;
-  
-  const { data, error } = await supabase.storage
-    .from('comic-images')
-    .upload(fileName, file);
-
-  if (error) {
-    throw new Error(`Failed to upload image: ${error.message}`);
-  }
-
-  const { data: { publicUrl } } = supabase.storage
-    .from('comic-images')
-    .getPublicUrl(fileName);
-
-  return publicUrl;
-}
-
-async function convertBlobUrlToFile(blobUrl: string): Promise<File> {
-  const response = await fetch(blobUrl);
-  const blob = await response.blob();
-  return new File([blob], 'image.jpg', { type: blob.type });
-}
-
-async function generateUniqueComicId(): Promise<string> {
-  let comicId: string;
-  let isUnique = false;
-
-  const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  
-  while (!isUnique) {
-    comicId = '';
-    for (let i = 0; i < 5; i++) {
-      comicId += characters.charAt(Math.floor(Math.random() * characters.length));
-    }
-
-    const { data, error } = await supabase
-      .from('comics')
-      .select('id')
-      .eq('id', comicId)
-      .single();
-
-    if (!data && (error?.code === 'PGRST116' || error === null)) {
-      // PGRST116: "The result contains 0 rows" which means the ID is unique
-      isUnique = true;
-    } else if (error) {
-      // Handle other potential errors
-      throw new Error('Failed to check for unique comic ID');
-    }
-  }
-  return comicId!;
-}
-
-export async function saveComic(pages: { image: File | string; caption: string }[], title?: string): Promise<string> {
+export async function saveComic(pages: ComicPage[], title: string): Promise<string> {
   try {
-    // Generate a unique 5-character ID
-    const comicId = await generateUniqueComicId();
+    // Generate a new UUID for the comic
+    const comicId = uuidv4();
 
-    // Create comic record
+    // First, create the comic entry
     const { error: comicError } = await supabase
       .from('comics')
-      .insert([{ id: comicId, title: title || 'Untitled Comic' }]);
+      .insert([{ id: comicId, title }]);
 
     if (comicError) {
-      throw new Error(`Failed to create comic: ${comicError.message}`);
+      throw new Error(`Error creating comic: ${comicError.message}`);
     }
 
-    // Upload images and create pages
-    const comicPages = [];
-    for (let i = 0; i < pages.length; i++) {
-      const page = pages[i];
-      let imageUrl: string;
-      
-      if (page.image instanceof File) {
-        imageUrl = await uploadImage(page.image);
-      } else if (typeof page.image === 'string' && page.image.startsWith('blob:')) {
-        // Convert blob URL to File and upload
-        const file = await convertBlobUrlToFile(page.image);
-        imageUrl = await uploadImage(file);
-      } else {
-        imageUrl = page.image; // Already a URL (for existing pages)
-      }
+    // Then, handle image uploads and create pages
+    const pagesWithUrls = await Promise.all(
+      pages.map(async (page, index) => {
+        let image_url = page.image_url;
 
-      comicPages.push({
-        comic_id: comicId,
-        page_number: i + 1,
-        image_url: imageUrl,
-        caption: page.caption
-      });
-    }
+        // If there's a File object, upload it
+        if (page.image instanceof File) {
+          const fileName = `${comicId}/${uuidv4()}-${page.image.name}`;
+          const { error: uploadError, data } = await supabase.storage
+            .from('comics')
+            .upload(fileName, page.image);
 
+          if (uploadError) {
+            throw new Error(`Error uploading image: ${uploadError.message}`);
+          }
+
+          // Get the public URL for the uploaded file
+          const { data: { publicUrl } } = supabase.storage
+            .from('comics')
+            .getPublicUrl(fileName);
+
+          image_url = publicUrl;
+        }
+
+        return {
+          comic_id: comicId,
+          page_number: index + 1, // Add page number
+          image_url,
+          caption: page.caption
+        };
+      })
+    );
+
+    // Insert all pages into comic_pages table
     const { error: pagesError } = await supabase
-      .from('comic_pages')
-      .insert(comicPages);
+      .from('comic_pages') // Updated table name
+      .insert(pagesWithUrls);
 
     if (pagesError) {
-      throw new Error(`Failed to create pages: ${pagesError.message}`);
+      throw new Error(`Error creating pages: ${pagesError.message}`);
     }
 
     return comicId;
   } catch (error) {
-    console.error('Error saving comic:', error);
-    throw error;
+    console.error('Error in saveComic:', error);
+    throw new Error(`Failed to save comic: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+}
+
+export async function updateComic(comicId: string, pages: ComicPage[], title: string): Promise<void> {
+  try {
+    // Update comic title
+    const { error: titleError } = await supabase
+      .from('comics')
+      .update({ title })
+      .eq('id', comicId);
+
+    if (titleError) {
+      throw new Error(`Error updating comic title: ${titleError.message}`);
+    }
+
+    // First, get existing pages to determine what needs to be deleted
+    const { data: existingPages, error: fetchError } = await supabase
+      .from('comic_pages')
+      .select('id')
+      .eq('comic_id', comicId);
+
+    if (fetchError) {
+      throw new Error(`Error fetching existing pages: ${fetchError.message}`);
+    }
+
+    const existingIds = new Set(existingPages?.map(p => p.id) || []);
+    const updatedIds = new Set(pages.filter(p => p.id).map(p => p.id));
+
+    // Delete pages that no longer exist
+    const idsToDelete = [...existingIds].filter(id => !updatedIds.has(id));
+    if (idsToDelete.length > 0) {
+      const { error: deleteError } = await supabase
+        .from('comic_pages')
+        .delete()
+        .in('id', idsToDelete);
+
+      if (deleteError) {
+        throw new Error(`Error deleting removed pages: ${deleteError.message}`);
+      }
+    }
+
+    // Handle each page
+    await Promise.all(
+      pages.map(async (page, index) => {
+        let image_url = page.image_url;
+
+        // If there's a File object, upload it
+        if (page.image instanceof File) {
+          const fileName = `${comicId}/${uuidv4()}-${page.image.name}`;
+          const { error: uploadError } = await supabase.storage
+            .from('comics')
+            .upload(fileName, page.image);
+
+          if (uploadError) {
+            throw new Error(`Error uploading image: ${uploadError.message}`);
+          }
+
+          // Get the public URL for the uploaded file
+          const { data: { publicUrl } } = supabase.storage
+            .from('comics')
+            .getPublicUrl(fileName);
+
+          image_url = publicUrl;
+        }
+
+        // If page has an ID, update it, otherwise create new
+        if (page.id) {
+          const { error: updateError } = await supabase
+            .from('comic_pages')
+            .update({ 
+              image_url, 
+              caption: page.caption,
+              page_number: index + 1 
+            })
+            .eq('id', page.id);
+
+          if (updateError) {
+            throw new Error(`Error updating page: ${updateError.message}`);
+          }
+        } else {
+          const { error: insertError } = await supabase
+            .from('comic_pages')
+            .insert([{
+              comic_id: comicId,
+              image_url,
+              caption: page.caption,
+              page_number: index + 1
+            }]);
+
+          if (insertError) {
+            throw new Error(`Error creating new page: ${insertError.message}`);
+          }
+        }
+      })
+    );
+  } catch (error) {
+    console.error('Error in updateComic:', error);
+    throw new Error(`Failed to update comic: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
 
 export async function getComic(id: string): Promise<Comic | null> {
   try {
-    console.log('Fetching comic with ID:', id);
-    
-    const { data: existingComic, error: comicError } = await supabase
+    // Get comic details
+    const { data: comic, error: comicError } = await supabase
       .from('comics')
       .select('*')
       .eq('id', id)
@@ -136,88 +201,23 @@ export async function getComic(id: string): Promise<Comic | null> {
       throw new Error(`Error fetching comic: ${comicError.message}`);
     }
 
-    console.log('Found comic:', existingComic);
-
+    // Get comic pages
     const { data: pages, error: pagesError } = await supabase
       .from('comic_pages')
       .select('*')
       .eq('comic_id', id)
-      .order('page_number');
+      .order('page_number', { ascending: true });
 
     if (pagesError) {
-      console.error('Error fetching pages:', pagesError);
-      return null;
+      throw new Error(`Error fetching pages: ${pagesError.message}`);
     }
 
-    console.log('Found pages:', pages);
-
     return {
-      ...existingComic,
+      ...comic,
       pages: pages || []
     };
   } catch (error) {
-    console.error('Error getting comic:', error);
-    return null;
-  }
-}
-
-export async function updateComic(id: string, pages: { id?: string; image: File | string; caption: string }[], title?: string): Promise<void> {
-  try {
-    // Update comic title if provided
-    if (title) {
-      const { error: comicError } = await supabase
-        .from('comics')
-        .update({ title, updated_at: new Date().toISOString() })
-        .eq('id', id);
-
-      if (comicError) {
-        throw new Error(`Failed to update comic: ${comicError.message}`);
-      }
-    }
-
-    // Delete all existing pages
-    const { error: deleteError } = await supabase
-      .from('comic_pages')
-      .delete()
-      .eq('comic_id', id);
-
-    if (deleteError) {
-      throw new Error(`Failed to delete existing pages: ${deleteError.message}`);
-    }
-
-    // Create new pages
-    const comicPages = [];
-    for (let i = 0; i < pages.length; i++) {
-      const page = pages[i];
-      let imageUrl: string;
-      
-      if (page.image instanceof File) {
-        imageUrl = await uploadImage(page.image);
-      } else if (typeof page.image === 'string' && page.image.startsWith('blob:')) {
-        // Convert blob URL to File and upload
-        const file = await convertBlobUrlToFile(page.image);
-        imageUrl = await uploadImage(file);
-      } else {
-        imageUrl = page.image; // Already a URL
-      }
-
-      comicPages.push({
-        comic_id: id,
-        page_number: i + 1,
-        image_url: imageUrl,
-        caption: page.caption
-      });
-    }
-
-    const { error: pagesError } = await supabase
-      .from('comic_pages')
-      .insert(comicPages);
-
-    if (pagesError) {
-      throw new Error(`Failed to create pages: ${pagesError.message}`);
-    }
-  } catch (error) {
-    console.error('Error updating comic:', error);
-    throw error;
+    console.error('Error in getComic:', error);
+    throw new Error(`Failed to get comic: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
